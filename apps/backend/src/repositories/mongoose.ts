@@ -1,8 +1,8 @@
 import mongoose, { Schema } from "mongoose";
-import type { Incident, IncidentEditable, IncidentRepository, User, UserRepository } from "../domain.js";
+import { categories, statuses, type Incident, type IncidentEditable, type IncidentRepository, type User, type UserRepository } from "../domain.js";
 
 const userSchema = new Schema({ email: { type: String, required: true, unique: true }, name: { type: String, required: true }, passwordHash: { type: String, required: true }, role: { type: String, enum: ["user"], default: "user" } }, { timestamps: { createdAt: true, updatedAt: false } });
-const incidentSchema = new Schema({ userId: { type: String, required: true, index: true }, title: String, description: String, category: String, address: String, latitude: Number, longitude: Number, imageUrl: String, status: { type: String, default: "reported" } }, { timestamps: true });
+const incidentSchema = new Schema({ userId: { type: String, required: true, index: true }, title: { type: String, required: true }, description: { type: String, required: true }, category: { type: String, enum: categories, required: true }, address: { type: String, required: true }, latitude: Number, longitude: Number, imageUrl: String, status: { type: String, enum: statuses, default: "reported" } }, { timestamps: true });
 const UserModel = mongoose.models.CivicUser ?? mongoose.model("CivicUser", userSchema);
 const IncidentModel = mongoose.models.CivicIncident ?? mongoose.model("CivicIncident", incidentSchema);
 type StoredDoc = { _id: unknown; email: string; name: string; passwordHash: string; role: "user"; createdAt: Date; userId: string; title: string; description: string; category: Incident["category"]; address: string; latitude?: number; longitude?: number; imageUrl?: string; status: Incident["status"]; updatedAt: Date };
