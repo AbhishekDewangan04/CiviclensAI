@@ -1,0 +1,5 @@
+import jwt from "jsonwebtoken";
+import type { RequestHandler } from "express";
+import type { UserRepository } from "../domain.js";
+export type AuthRequest = Express.Request & { userId?: string };
+export function authMiddleware(secret: string, users: UserRepository): RequestHandler { return async (request, response, next) => { try { const token = request.headers.cookie?.split(";").map((v) => v.trim()).find((v) => v.startsWith("civiclens_token="))?.slice("civiclens_token=".length); if (!token) { response.status(401).json({ error: { code: "UNAUTHORIZED", message: "Authentication required" } }); return; } const payload = jwt.verify(token, secret); if (typeof payload !== "object" || typeof payload.sub !== "string" || !(await users.findById(payload.sub))) { response.status(401).json({ error: { code: "UNAUTHORIZED", message: "Authentication required" } }); return; } (request as AuthRequest).userId = payload.sub; next(); } catch { response.status(401).json({ error: { code: "UNAUTHORIZED", message: "Authentication required" } }); } }; }
