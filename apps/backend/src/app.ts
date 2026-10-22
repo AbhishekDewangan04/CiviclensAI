@@ -58,6 +58,7 @@ export function createApp(deps: AppDeps): Express {
   const limiter = createRateLimiter(deps.rateLimit ?? { max: 30, windowMs: 60_000 });
 
   app.disable("x-powered-by");
+  app.set("trust proxy", 1);
   app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
   app.use(
     cors({
