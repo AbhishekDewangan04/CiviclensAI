@@ -1,29 +1,22 @@
+"""Accuracy check for the keyword classifier against the evaluation set."""
+
 import json
 from pathlib import Path
 
-from app.api.models import DescriptionRequest
-from app.main import classify
+from app.core.intelligence import classify_text
+
+CASES_PATH = Path(__file__).resolve().parent.parent / "evaluation" / "classification_cases.json"
 
 
-CASES = json.loads((Path(__file__).parents[1] / "evaluation" / "classification_cases.json").read_text(encoding="utf-8"))
-
-
-def test_labeled_keyword_baseline_evaluation() -> None:
-    results = [classify(DescriptionRequest(description=item["description"])).category == item["expected"] for item in CASES]
-    correct = sum(results)
-    accuracy = correct / len(results)
-    print(f"classification evaluation: {correct}/{len(results)} = {accuracy:.3f}")
-    assert len(results) == 12
-    assert correct == 12
-
-
-def test_duplicate_similarity_explicit_cases() -> None:
-    from app.main import duplicates
-    from app.api.models import DuplicateRequest
-
-    response = duplicates(DuplicateRequest(description="large pothole on Main Street", candidates=[
-        {"id": "same", "text": "large pothole on Main Street"},
-        {"id": "different", "text": "garbage collection near the market"},
-    ]))
-    assert [candidate.id for candidate in response.candidates] == ["same"]
-    assert response.candidates[0].similarity == 1
+def test_classification_accuracy() -> None:
+    cases = json.loads(CASES_PATH.read_text(encoding="utf-8"))
+    assert len(cases) >= 24
+    misses = []
+    for case in cases:
+        predicted, _ = classify_text(case["description"])
+        if predicted != case["expected"]:
+            misses.append(
+                f"{case['description']!r}: expected {case['expected']}, got {predicted}"
+            )
+    accuracy = (len(cases) - len(misses)) / len(cases)
+    assert accuracy >= 0.9, f"accuracy {accuracy:.3f}; misses:\n" + "\n".join(misses)

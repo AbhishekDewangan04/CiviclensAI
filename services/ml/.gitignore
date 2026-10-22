@@ -1,0 +1,5 @@
+.venv
+.venv-stable
+.venv-312
+__pycache__
+.pytest_cache
