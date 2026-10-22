@@ -1,3 +1,18 @@
+[project]
+name = "civiclens-ml"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.121.3",
+    "pydantic==2.12.3",
+    "pydantic-settings==2.11.0",
+    "uvicorn[standard]==0.38.0",
+    "httpx==0.28.1",
+]
+
 [tool.pytest.ini_options]
-testpaths = ["tests"]
 pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.vercel]
+entrypoint = "app.main:app"
