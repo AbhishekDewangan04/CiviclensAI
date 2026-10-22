@@ -1,7 +1,7 @@
-import { createApp } from "../src/app";
-import { loadConfig } from "../src/config";
-import { createHttpMlClient } from "../src/services/mlClient";
-import { PostgresRepository } from "../src/store/postgresRepository";
+import { createApp } from "./app";
+import { loadConfig } from "./config";
+import { createHttpMlClient } from "./services/mlClient";
+import { PostgresRepository } from "./store/postgresRepository";
 
 const config = loadConfig();
 const databaseUrl = process.env.DATABASE_URL;
