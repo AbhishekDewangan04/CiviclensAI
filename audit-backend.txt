@@ -1,0 +1,118 @@
+warning: in the working copy of 'apps/backend/src/app.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/backend/src/config/env.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/backend/src/routes/incidents.ts', LF will be replaced by CRLF the next time Git touches it
+diff --git a/apps/backend/src/app.ts b/apps/backend/src/app.ts
+index 7edf0c8..5dbd32c 100644
+--- a/apps/backend/src/app.ts
++++ b/apps/backend/src/app.ts
+@@ -7,18 +7,31 @@ import { healthRoutes } from "./routes/health.js";
+ import { authRoutes } from "./routes/auth.js";
+ import { incidentRoutes } from "./routes/incidents.js";
+ import type { IncidentRepository, UserRepository } from "./domain.js";
+-import { MemoryIncidentRepository, MemoryUserRepository } from "./repositories/memory.js";
++import { MemoryEvidenceRepository, MemoryIncidentRepository, MemoryUserRepository } from "./repositories/memory.js";
++import { FetchIntelligenceClient, type IntelligenceClient } from "./intelligence.js";
++import { intelligenceRoutes } from "./routes/intelligence.js";
++import { analyticsRoutes } from "./routes/analytics.js";
++import { EvidenceService } from "./evidence.js";
++import type { EvidenceRepository } from "./domain.js";
+ 
+-export type AppRepositories = { users: UserRepository; incidents: IncidentRepository };
+-export function createApp(config: AppConfig, isReady: () => boolean = () => true, repositories: AppRepositories = { users: new MemoryUserRepository(), incidents: new MemoryIncidentRepository() }): Express {
++export type AppRepositories = { users: UserRepository; incidents: IncidentRepository; evidence?: EvidenceRepository };
++export function createApp(config: AppConfig, isReady: () => boolean = () => true, repositories: AppRepositories = { users: new MemoryUserRepository(), incidents: new MemoryIncidentRepository(), evidence: new MemoryEvidenceRepository() }, intelligence: IntelligenceClient = new FetchIntelligenceClient(config)): Express {
+   const app = express();
+   app.disable("x-powered-by");
+-  app.use(cors({ origin: [...config.corsOrigins], optionsSuccessStatus: 204 }));
++  app.use(cors({
++    origin: [...config.corsOrigins],
++    credentials: true,
++    methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
++    allowedHeaders: ["Accept", "Content-Type"],
++    optionsSuccessStatus: 204,
++  }));
+   app.use(express.json({ limit: config.jsonLimit }));
+   app.use(requestLogger);
+   app.use("/api", healthRoutes(isReady));
+   app.use("/api/auth", authRoutes(config, repositories.users));
+-  app.use("/api/incidents", incidentRoutes(config, repositories.users, repositories.incidents));
++  app.use("/api/incidents", incidentRoutes(config, repositories.users, repositories.incidents, intelligence, new EvidenceService(repositories.evidence ?? new MemoryEvidenceRepository())));
++  app.use("/api/intelligence", intelligenceRoutes(config, repositories.users, repositories.incidents, intelligence));
++  app.use("/api/analytics", analyticsRoutes(config, repositories.users, repositories.incidents));
+   app.use(malformedJson);
+   app.use(notFound);
+   app.use(errorHandler);
+diff --git a/apps/backend/src/config/env.ts b/apps/backend/src/config/env.ts
+index 26584ef..a7f5916 100644
+--- a/apps/backend/src/config/env.ts
++++ b/apps/backend/src/config/env.ts
+@@ -2,12 +2,16 @@ import { z } from "zod";
+ 
+ const envSchema = z.object({
+   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+-  PORT: z.coerce.number().int().min(1).max(65535).default(4000),
+-  CORS_ORIGINS: z.string().default("http://localhost:5173"),
++  PORT: z.coerce.number().int().min(1).max(65535).default(4001),
++  CORS_ORIGINS: z.string().default("http://localhost:5176,http://localhost:5173"),
+   JSON_LIMIT: z.string().default("100kb"),
+   JWT_SECRET: z.string().min(16).default("local-development-jwt-secret-change-me"),
+-  JWT_EXPIRES_IN: z.string().default("7d"),
++  JWT_EXPIRES_IN: z.string().regex(/^\d+[smhdw]$/, "JWT_EXPIRES_IN must use a duration such as 15m or 7d").default("7d"),
+   MONGODB_URI: z.string().optional(),
++  ML_SERVICE_BASE_URL: z.string().url().default("http://localhost:8000"),
++  ML_TIMEOUT_MS: z.coerce.number().int().min(50).max(30000).default(1000),
++  AUTH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1000).max(86400000).default(900000),
++  AUTH_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(10000).default(100),
+ });
+ 
+ export type AppConfig = {
+@@ -18,6 +22,10 @@ export type AppConfig = {
+   jwtSecret: string;
+   jwtExpiresIn: string;
+   mongodbUri?: string;
++  mlServiceBaseUrl: string;
++  mlTimeoutMs: number;
++  authRateLimitWindowMs: number;
++  authRateLimitMax: number;
+ };
+ 
+ export class ConfigError extends Error {
+@@ -36,5 +44,5 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
+   const origins = parsed.data.CORS_ORIGINS.split(",").map((origin) => origin.trim()).filter(Boolean);
+   if (origins.length === 0) throw new ConfigError([{ code: "custom", path: ["CORS_ORIGINS"], message: "At least one origin is required" }]);
+   if (parsed.data.NODE_ENV === "production" && parsed.data.JWT_SECRET === "local-development-jwt-secret-change-me") throw new ConfigError([{ code: "custom", path: ["JWT_SECRET"], message: "JWT_SECRET must be set in production" }]);
+-  return { nodeEnv: parsed.data.NODE_ENV, port: parsed.data.PORT, corsOrigins: origins, jsonLimit: parsed.data.JSON_LIMIT, jwtSecret: parsed.data.JWT_SECRET, jwtExpiresIn: parsed.data.JWT_EXPIRES_IN, ...(parsed.data.MONGODB_URI ? { mongodbUri: parsed.data.MONGODB_URI } : {}) };
++  return { nodeEnv: parsed.data.NODE_ENV, port: parsed.data.PORT, corsOrigins: origins, jsonLimit: parsed.data.JSON_LIMIT, jwtSecret: parsed.data.JWT_SECRET, jwtExpiresIn: parsed.data.JWT_EXPIRES_IN, mlServiceBaseUrl: parsed.data.ML_SERVICE_BASE_URL, mlTimeoutMs: parsed.data.ML_TIMEOUT_MS, authRateLimitWindowMs: parsed.data.AUTH_RATE_LIMIT_WINDOW_MS, authRateLimitMax: parsed.data.AUTH_RATE_LIMIT_MAX, ...(parsed.data.MONGODB_URI ? { mongodbUri: parsed.data.MONGODB_URI } : {}) };
+ }
+diff --git a/apps/backend/src/routes/incidents.ts b/apps/backend/src/routes/incidents.ts
+index 6756a85..b0d8307 100644
+--- a/apps/backend/src/routes/incidents.ts
++++ b/apps/backend/src/routes/incidents.ts
+@@ -1,16 +1,23 @@
+ import { Router, type Response } from "express";
+ import { z } from "zod";
+ import type { AppConfig } from "../config/env.js";
+-import { categories } from "../domain.js";
++import { categories, type IncidentIntelligence } from "../domain.js";
+ import type { IncidentRepository, UserRepository } from "../domain.js";
+ import { authMiddleware, type AuthRequest } from "../middleware/auth.js";
++import { unavailableSuggestion, type IntelligenceClient } from "../intelligence.js";
++import { EvidenceService } from "../evidence.js";
+ const fields = { title: z.string().trim().min(1).max(200), description: z.string().trim().min(1).max(5000), category: z.enum(categories), address: z.string().trim().min(1).max(500), latitude: z.number().min(-90).max(90).optional(), longitude: z.number().min(-180).max(180).optional(), imageUrl: z.string().url().max(2000).optional() };
++const evidenceSchema = z.object({ imageUrl: z.string().trim().url().max(2000).refine((value) => /^https?:\/\//i.test(value), "Image URL must use HTTP or HTTPS"), description: z.string().trim().min(1).max(2000) }).strict();
+ const createSchema = z.object(fields).strict();
+ const updateSchema = z.object(fields).partial().strict().refine((value) => Object.keys(value).length > 0, "At least one field is required");
+ const invalid = (res: Response) => res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Invalid request" } });
+-export function incidentRoutes(config: AppConfig, users: UserRepository, incidents: IncidentRepository): Router { const router = Router(); router.use(authMiddleware(config.jwtSecret, users));
+-  router.post("/", async (req, res) => { const parsed = createSchema.safeParse(req.body); if (!parsed.success) return invalid(res); const incident = await incidents.create({ ...parsed.data, userId: (req as AuthRequest).userId!, status: "reported" }); return res.status(201).json({ incident }); });
++export function incidentRoutes(config: AppConfig, users: UserRepository, incidents: IncidentRepository, intelligence: IntelligenceClient, evidence: EvidenceService): Router { const router = Router(); router.use(authMiddleware(config.jwtSecret, users));
++  const suggestion = async (description: string, userId: string, excludeId?: string) => { try { const own = await incidents.listByUser(userId); return await intelligence.suggest(description, own.filter((item) => item.id !== excludeId).map((item) => ({ id: item.id, text: `${item.title} ${item.description} ${item.address}` }))); } catch { return unavailableSuggestion(); } };
++  router.post("/", async (req, res) => { const parsed = createSchema.safeParse(req.body); if (!parsed.success) return invalid(res); const userId = (req as AuthRequest).userId!; const suggestions = await suggestion(parsed.data.description, userId); const own = await incidents.listByUser(userId); const byId = new Map(own.map((item) => [item.id, item])); const intelligenceData: IncidentIntelligence = { ...(suggestions.category ? { predictedCategory: suggestions.category.category, categoryConfidence: suggestions.category.score, classificationMethod: suggestions.category.method } : {}), ...(suggestions.duplicates.length ? { duplicateReports: suggestions.duplicates.flatMap((match) => { const matchIncident = byId.get(match.id); return matchIncident ? [{ id: matchIncident.id, title: matchIncident.title, similarityScore: match.similarity, address: matchIncident.address, status: matchIncident.status }] : []; }) } : {}) }; const incident = await incidents.create({ ...parsed.data, userId, status: "reported", ...(Object.keys(intelligenceData).length ? { intelligence: intelligenceData } : {}) }); return res.status(201).json({ incident, suggestions }); });
+   router.get("/", async (req, res) => res.json({ incidents: await incidents.listByUser((req as AuthRequest).userId!) }));
+   router.get("/:id", async (req, res) => { const item = await incidents.findById(req.params.id); if (!item || item.userId !== (req as AuthRequest).userId) return res.status(404).json({ error: { code: "NOT_FOUND", message: "Incident not found" } }); return res.json({ incident: item }); });
+-  router.patch("/:id", async (req, res) => { const parsed = updateSchema.safeParse(req.body); if (!parsed.success) return invalid(res); const item = await incidents.update(req.params.id, (req as AuthRequest).userId!, parsed.data); if (!item) return res.status(404).json({ error: { code: "NOT_FOUND", message: "Incident not found" } }); return res.json({ incident: item }); });
++  router.patch("/:id", async (req, res) => { const parsed = updateSchema.safeParse(req.body); if (!parsed.success) return invalid(res); const userId = (req as AuthRequest).userId!; const item = await incidents.update(req.params.id, userId, parsed.data); if (!item) return res.status(404).json({ error: { code: "NOT_FOUND", message: "Incident not found" } }); const suggestions = await suggestion(item.description, userId, item.id); return res.json({ incident: item, suggestions }); });
++  router.post("/:id/evidence", async (req, res, next) => { try { const parsed = evidenceSchema.safeParse(req.body); if (!parsed.success) return invalid(res); const userId = (req as AuthRequest).userId!; const incident = await incidents.findById(req.params.id); if (!incident || incident.userId !== userId) return res.status(404).json({ error: { code: "NOT_FOUND", message: "Incident not found" } }); const item = await evidence.submit({ ...parsed.data, incidentId: incident.id, userId }); return res.status(201).json({ evidence: item }); } catch (error) { return next(error); } });
++  router.get("/:id/evidence", async (req, res, next) => { try { const userId = (req as AuthRequest).userId!; const incident = await incidents.findById(req.params.id); if (!incident || incident.userId !== userId) return res.status(404).json({ error: { code: "NOT_FOUND", message: "Incident not found" } }); return res.json({ evidence: await evidence.history(incident.id, userId) }); } catch (error) { return next(error); } });
++  router.post("/:id/evidence/:evidenceId/review", async (req, res) => { const incident = await incidents.findById(req.params.id); if (!incident || incident.userId !== (req as AuthRequest).userId!) return res.status(404).json({ error: { code: "NOT_FOUND", message: "Incident not found" } }); return res.status(403).json({ error: { code: "REVIEWER_REQUIRED", message: "A reviewer role is required to review evidence" } }); });
+   router.delete("/:id", async (req, res) => { if (!(await incidents.delete(req.params.id, (req as AuthRequest).userId!))) return res.status(404).json({ error: { code: "NOT_FOUND", message: "Incident not found" } }); return res.status(204).send(); }); return router; }

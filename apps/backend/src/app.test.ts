@@ -33,7 +33,23 @@ describe("phase one HTTP service", () => {
     expect(oversized.status).toBe(413);
     expect(oversized.body.error.message).not.toContain("limit");
   });
+  it("allows credentialed requests and preflight only from configured origins", async () => {
+    const app = createApp(config);
+    const preflight = await request(app).options("/api/auth/register")
+      .set("Origin", "https://allowed.example")
+      .set("Access-Control-Request-Method", "POST")
+      .set("Access-Control-Request-Headers", "content-type");
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers["access-control-allow-origin"]).toBe("https://allowed.example");
+    expect(preflight.headers["access-control-allow-credentials"]).toBe("true");
+    expect(preflight.headers["access-control-allow-methods"]).toContain("POST");
+    expect((preflight.headers["access-control-allow-headers"] ?? "").toLowerCase()).toContain("content-type");
+    const credentialed = await request(app).post("/api/auth/login").set("Origin", "https://allowed.example").send({ email: "x@example.com", password: "password123" });
+    expect(credentialed.headers["access-control-allow-origin"]).toBe("https://allowed.example");
+    expect(credentialed.headers["access-control-allow-credentials"]).toBe("true");
+  });
   it("rejects invalid configuration", () => {
     expect(() => loadConfig({ CORS_ORIGINS: "", PORT: "0" })).toThrow("Invalid application configuration");
+    expect(() => loadConfig({ NODE_ENV: "production", JWT_SECRET: "local-development-jwt-secret-change-me" })).toThrow("Invalid application configuration");
   });
 });

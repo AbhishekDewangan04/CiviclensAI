@@ -1,0 +1,24 @@
+Lifecycle scripts included in civiclens-ai@0.1.0:
+  test
+    npm run test:frontend && npm run test:backend && npm run test:ml
+available via `npm run`:
+  install:js
+    npm ci
+  dev:frontend
+    npm run dev -w @civiclens/frontend
+  dev:backend
+    npm run dev -w @civiclens/backend
+  test:frontend
+    npm run test -w @civiclens/frontend
+  test:backend
+    npm run test -w @civiclens/backend
+  test:ml
+    node scripts/run-ml-tests.mjs
+  typecheck
+    npm run typecheck -w @civiclens/frontend && npm run typecheck -w @civiclens/backend
+  lint
+    npm run lint -w @civiclens/frontend && npm run lint -w @civiclens/backend
+  build
+    npm run build -w @civiclens/frontend && npm run build -w @civiclens/backend
+  verify
+    npm run test && npm run typecheck && npm run lint && npm run build && python -m compileall -q services/ml/app services/ml/tests

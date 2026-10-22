@@ -1,11 +1,11 @@
 import { createServer } from "node:http";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config/env.js";
-import { MongooseIncidentRepository, MongooseUserRepository, connectMongo } from "./repositories/mongoose.js";
+import { MongooseEvidenceRepository, MongooseIncidentRepository, MongooseUserRepository, connectMongo } from "./repositories/mongoose.js";
 
 const config = loadConfig();
 let ready = false;
-const repositories = config.mongodbUri ? { users: new MongooseUserRepository(), incidents: new MongooseIncidentRepository() } : undefined;
+const repositories = config.mongodbUri ? { users: new MongooseUserRepository(), incidents: new MongooseIncidentRepository(), evidence: new MongooseEvidenceRepository() } : undefined;
 const server = createServer(createApp(config, () => ready, repositories));
 
 void (async () => { if (config.mongodbUri) await connectMongo(config.mongodbUri); server.listen(config.port, () => { ready = true; process.stdout.write(`Civiclens backend listening on ${config.port}\n`); }); })().catch(() => { process.stderr.write("Failed to connect to MongoDB\n"); process.exitCode = 1; });

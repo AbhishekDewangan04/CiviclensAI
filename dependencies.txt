@@ -1,0 +1,42 @@
+civiclens-ai@0.1.0 C:\Users\ABHISHEK DEWANGAN\Desktop\CiviclensAI
+├─┬ @civiclens/backend@0.1.0 -> .\apps\backend
+│ ├── @types/cors@2.8.19
+│ ├── @types/express@5.0.6
+│ ├── @types/jsonwebtoken@9.0.10
+│ ├── @types/node@22.20.5
+│ ├── @types/supertest@6.0.3
+│ ├── bcryptjs@2.4.3
+│ ├── cors@2.8.6
+│ ├── eslint@9.39.5
+│ ├── express@4.22.3
+│ ├── jsonwebtoken@9.0.3
+│ ├── mongoose@8.24.5
+│ ├── supertest@7.3.1
+│ ├── tsx@4.23.15
+│ ├── typescript-eslint@8.72.0
+│ ├── typescript@5.9.3
+│ ├── vitest@2.1.9
+│ └── zod@3.25.76
+├─┬ @civiclens/frontend@0.1.0 -> .\apps\frontend
+│ ├── @eslint/js@9.39.5
+│ ├── @testing-library/jest-dom@6.9.1
+│ ├── @testing-library/react@16.3.3
+│ ├── @testing-library/user-event@14.6.8
+│ ├── @types/leaflet@1.9.22
+│ ├── @types/react-dom@18.3.7
+│ ├── @types/react@18.3.31
+│ ├── @vitejs/plugin-react@4.7.0
+│ ├── eslint-plugin-react-hooks@5.2.0
+│ ├── eslint@9.39.5 deduped
+│ ├── jsdom@25.0.1
+│ ├── leaflet@1.9.4
+│ ├── lucide-react@0.468.0
+│ ├── react-dom@18.3.1
+│ ├── react-leaflet@4.2.1
+│ ├── react@18.3.1
+│ ├── typescript-eslint@8.72.0 deduped
+│ ├── typescript@5.9.3 deduped
+│ ├── vite@6.4.4
+│ └── vitest@2.1.9 deduped
+└── @types/bcryptjs@2.4.6
+

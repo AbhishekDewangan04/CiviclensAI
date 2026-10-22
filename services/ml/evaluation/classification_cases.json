@@ -1,0 +1,14 @@
+[
+  {"description": "A deep pothole has opened in the roadway", "expected": "pothole"},
+  {"description": "Road crater beside the school entrance", "expected": "pothole"},
+  {"description": "Trash bags and garbage are blocking the lane", "expected": "garbage"},
+  {"description": "Waste and litter have piled up near the market", "expected": "garbage"},
+  {"description": "The water supply pipe is leaking", "expected": "water_supply"},
+  {"description": "No water is coming from the tap", "expected": "water_supply"},
+  {"description": "The streetlight bulb is broken and the road is dark", "expected": "streetlight"},
+  {"description": "A lamp is out near the crossing", "expected": "streetlight"},
+  {"description": "Drainage is blocked and flooding the street", "expected": "drainage"},
+  {"description": "Sewer waterlogging is spreading after rain", "expected": "drainage"},
+  {"description": "A damaged public bench needs attention", "expected": "other"},
+  {"description": "The park gate is broken", "expected": "other"}
+]
