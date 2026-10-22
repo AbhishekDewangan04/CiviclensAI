@@ -1,28 +1,36 @@
-import { createServer } from "node:http";
-import { createApp } from "./app.js";
-import { loadConfig } from "./config/env.js";
-import { MongooseEvidenceRepository, MongooseIncidentRepository, MongooseUserRepository, connectMongo } from "./repositories/mongoose.js";
+import path from "node:path";
+import { createApp } from "./app";
+import { loadConfig, loadDotEnvFile, type Config } from "./config";
+import { createHttpMlClient } from "./services/mlClient";
+import { JsonFileRepository } from "./store/jsonFileRepository";
 
-const config = loadConfig();
-let ready = false;
-const repositories = config.mongodbUri ? { users: new MongooseUserRepository(), incidents: new MongooseIncidentRepository(), evidence: new MongooseEvidenceRepository() } : undefined;
-const server = createServer(createApp(config, () => ready, repositories));
+loadDotEnvFile(path.resolve(".env"));
 
-void (async () => { if (config.mongodbUri) await connectMongo(config.mongodbUri); server.listen(config.port, () => { ready = true; process.stdout.write(`Civiclens backend listening on ${config.port}\n`); }); })().catch(() => { process.stderr.write("Failed to connect to MongoDB\n"); process.exitCode = 1; });
-
-let shuttingDown = false;
-function shutdown(signal: string): void {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  ready = false;
-  process.stdout.write(`Received ${signal}; shutting down\n`);
-  server.close((error) => {
-    if (error) {
-      process.stderr.write("Failed to close server cleanly\n");
-      process.exitCode = 1;
-    }
-    process.exit();
-  });
+let config: Config;
+try {
+  config = loadConfig();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
 }
-process.once("SIGTERM", () => shutdown("SIGTERM"));
-process.once("SIGINT", () => shutdown("SIGINT"));
+
+const repo = await JsonFileRepository.open(path.resolve(config.dataFile), console);
+const ml = createHttpMlClient({
+  baseUrl: config.mlBaseUrl,
+  apiKey: config.mlApiKey,
+  timeoutMs: config.mlTimeoutMs,
+});
+const app = createApp({ repo, ml, corsOrigins: config.corsOrigins, logger: console });
+
+const server = app.listen(config.port, () => {
+  console.log(`CivicLens backend listening on http://localhost:${config.port} (${config.nodeEnv})`);
+});
+
+server.on("error", (error: NodeJS.ErrnoException) => {
+  console.error(
+    error.code === "EADDRINUSE"
+      ? `Port ${config.port} is already in use`
+      : `Server error: ${error.message}`,
+  );
+  process.exit(1);
+});
