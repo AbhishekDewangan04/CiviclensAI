@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { MapContainer, Marker, TileLayer, useMap } from "react-leaflet";
+import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Crosshair, Loader2 } from "lucide-react";
@@ -10,58 +10,49 @@ const PICK_ZOOM = 15;
 
 const pinIcon = L.divIcon({
   className: "civic-marker",
-  html: '<span style="display:flex;align-items:center;justify-content:center;width:18px;height:18px"><span class="civic-dot" style="background:#10B981;box-shadow:0 0 0 7px rgba(16,185,129,0.18), 0 0 20px rgba(16,185,129,0.85)"></span></span>',
+  html: '<span style="display:flex;align-items:center;justify-content:center;width:18px;height:18px"><span class="civic-dot" style="background:#10B981;box-shadow:0 0 0 7px rgba(16,185,129,0.18), 0 0 20px rgba(16,185,129,0.85);width:10px;height:10px;border-radius:50%"></span></span>',
   iconSize: [18, 18],
   iconAnchor: [9, 9],
 });
 
-// Leaflet measures its box the moment it mounts. Inside a dialog that is still
-// opening, that measurement is wrong, and every later tap is thrown off by it.
-// So: re-measure once the box is real, then pin the view to the centre we meant.
+// Handles re-measuring container dimensions inside dynamic modal transitions
 function MapSettle({ center, zoom }) {
   const map = useMap();
-  const viewKey = `${center[0]},${center[1]},${zoom}`;
 
   useEffect(() => {
-    const [lat, lng, z] = viewKey.split(",").map(Number);
-    const settle = () => {
-      map.invalidateSize({ animate: false, pan: false });
-      if (map.getSize().y > 0) map.setView([lat, lng], z, { animate: false });
-    };
-    const timers = [0, 150, 400, 800].map((delay) => window.setTimeout(settle, delay));
-    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(settle) : null;
-    if (observer) observer.observe(map.getContainer());
-    return () => {
-      timers.forEach((timer) => window.clearTimeout(timer));
-      if (observer) observer.disconnect();
-    };
-  }, [map, viewKey]);
+    const timer = setTimeout(() => {
+      map.invalidateSize({ animate: false });
+      if (center) {
+        map.setView(center, zoom, { animate: false });
+      }
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [map, center, zoom]);
 
   return null;
 }
 
+// Intercepts clicks on map tiles cleanly using Leaflet's internal event listener
 function ClickCatcher({ onPick }) {
+  useMapEvents({
+    click(e) {
+      onPick(e.latlng.lat, e.latlng.lng);
+    },
+  });
+
+  return null;
+}
+
+// Smoothly pans the map when user selects a location via button or click
+function MapRecenter({ position }) {
   const map = useMap();
 
   useEffect(() => {
-    const container = map.getContainer();
-
-    // Work the tapped point out from the map centre and the live box, instead of
-    // trusting the map's own mouse maths in a resizing dialog.
-    const handleClick = (event) => {
-      const box = container.getBoundingClientRect();
-      if (!box.width || !box.height) return;
-      const zoom = map.getZoom();
-      const centrePx = map.project(map.getCenter(), zoom);
-      const dx = event.clientX - box.left - box.width / 2;
-      const dy = event.clientY - box.top - box.height / 2;
-      const latlng = map.unproject([centrePx.x + dx, centrePx.y + dy], zoom);
-      onPick(latlng.lat, latlng.lng);
-    };
-
-    container.addEventListener("click", handleClick);
-    return () => container.removeEventListener("click", handleClick);
-  }, [map, onPick]);
+    if (position) {
+      map.flyTo(position, PICK_ZOOM, { duration: 1 });
+    }
+  }, [map, position]);
 
   return null;
 }
@@ -72,7 +63,7 @@ export default function LocationPicker({ value, onChange }) {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setReady(true), 200);
+    const timer = window.setTimeout(() => setReady(true), 150);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -104,15 +95,27 @@ export default function LocationPicker({ value, onChange }) {
       <div className="overflow-hidden rounded-2xl border border-white/10">
         <div className="relative z-0">
           {ready ? (
-            <MapContainer center={center} zoom={zoom} scrollWheelZoom className="h-52 w-full sm:h-60">
+            <MapContainer
+              center={center}
+              zoom={zoom}
+              minZoom={3}
+              maxZoom={18}
+              scrollWheelZoom={false} // Prevents wheel scroll from auto-zooming inside modal
+              className="h-52 w-full sm:h-60"
+            >
               <TileLayer
-                url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
-                attribution="Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ"
-                maxZoom={16}
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                maxZoom={19}
               />
               <MapSettle center={center} zoom={zoom} />
               <ClickCatcher onPick={(lat, lng) => onChange({ lat, lng })} />
-              {value && <Marker position={[value.lat, value.lng]} icon={pinIcon} />}
+              {value && (
+                <>
+                  <Marker position={[value.lat, value.lng]} icon={pinIcon} />
+                  <MapRecenter position={[value.lat, value.lng]} />
+                </>
+              )}
             </MapContainer>
           ) : (
             <div className="grid h-52 w-full place-items-center bg-[#080D18] text-[12px] text-white/35 sm:h-60">

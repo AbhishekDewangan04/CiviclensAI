@@ -1,147 +1,197 @@
-import React, { useState } from "react";
-import { Loader2, Sparkles, TriangleAlert } from "lucide-react";
-import ScrollReveal from "@/components/ScrollReveal";
-import SectionHeading from "@/components/SectionHeading";
-import Pill from "@/components/Pill";
-import { SEVERITY_MAP } from "@/lib/reportMeta";
+import React, { useEffect, useMemo, useState } from "react";
+import { Sparkles, Loader2, AlertCircle, FileText, TrendingUp, ShieldCheck } from "lucide-react";
 import { base44 } from "@/api/base44Client";
+import { CATEGORY_MAP } from "@/lib/reportMeta";
 
-export default function AIInsightsSection() {
+const plural = (n, one, many) => (n === 1 ? one : many);
+const labelOf = (value) => CATEGORY_MAP[value]?.label || value || "Other";
+
+// Builds the briefing purely from the reports passed in, so it always matches the hero counters.
+function buildBriefing(reports = []) {
+  const total = reports.length;
+
+  if (total === 0) {
+    return {
+      summary: "No civic signals have been filed yet, so there is nothing to analyse.",
+      topConcern: "No pattern yet.",
+      hotspots: "File a report and the briefing will update with what it finds.",
+      recommendations: ["Encourage residents to file their first reports so trends can be detected."],
+    };
+  }
+
+  const open = reports.filter((r) => r.status !== "resolved");
+  const critical = open.filter((r) => r.severity === "critical");
+  const high = open.filter((r) => r.severity === "high");
+  const pending = open.filter((r) => r.status === "pending");
+
+  const byCategory = {};
+  reports.forEach((r) => {
+    const key = r.category || "other";
+    byCategory[key] = (byCategory[key] || 0) + 1;
+  });
+  const ranked = Object.entries(byCategory).sort((a, b) => b[1] - a[1]);
+  const [topKey, topCount] = ranked[0];
+  const second = ranked[1];
+
+  const recommendations = [];
+  if (critical.length) {
+    recommendations.push(
+      `Send crews to the ${critical.length} critical ${plural(critical.length, "report", "reports")} first.`
+    );
+  }
+  if (high.length) {
+    recommendations.push(
+      `Schedule the ${high.length} high-severity ${plural(high.length, "report", "reports")} for this week.`
+    );
+  }
+  if (pending.length) {
+    recommendations.push(
+      `Review ${pending.length} ${plural(pending.length, "report that is", "reports that are")} still pending and post a status update.`
+    );
+  }
+
+  // Only push category trend recommendation when multiple categories exist
+  if (ranked.length > 1) {
+    recommendations.push(`Watch ${labelOf(topKey)}: it is the most reported category (${topCount} of ${total}).`);
+  }
+
+  if (!open.length) {
+    recommendations.unshift("Every filed report is resolved. No action needed right now.");
+  }
+
+  return {
+    summary: `Analysed ${total} registered civic ${plural(total, "signal", "signals")}. ${open.length} ${plural(open.length, "issue remains", "issues remain")} open, with ${critical.length} flagged at critical urgency.`,
+    topConcern: total === 1
+      ? `The only report so far is in ${labelOf(topKey).toUpperCase()}.`
+      : `The most reported category is ${labelOf(topKey).toUpperCase()}, with ${topCount} of ${total} reports.`,
+    hotspots: second
+      ? `Next most reported: ${labelOf(second[0])} (${second[1]}).`
+      : `All reports so far fall under ${labelOf(topKey)}.`,
+    recommendations,
+  };
+}
+
+export default function AIInsightsSection({ reports = [] }) {
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
+  const [remote, setRemote] = useState(null);
   const [error, setError] = useState("");
 
-  const generate = async () => {
+  // Recomputes whenever reports change, so filing a report updates the briefing immediately.
+  const local = useMemo(() => buildBriefing(reports), [reports]);
+
+  // A remote briefing is only valid for the reports it was generated from.
+  useEffect(() => {
+    setRemote(null);
+  }, [reports]);
+
+  const briefing = remote || local;
+
+  const regenerate = async () => {
     setLoading(true);
     setError("");
     try {
-      const response = await base44.functions.invoke("cityInsights", {});
-      setResult(response.data);
+      // In dev the mocked API has no AI function, so skip straight to the local briefing.
+      if (!import.meta.env.DEV && typeof base44?.functions?.invoke === "function") {
+        try {
+          const res = await base44.functions.invoke("generateBriefing", { reports });
+          const result = res?.briefing || res?.data?.briefing;
+          if (result?.summary) setRemote(result);
+        } catch (err) {
+          console.warn("[CivicLens] Briefing function unavailable, using local briefing.", err);
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
     } catch (e) {
-      setError("The briefing couldn't be written just now. Give it another try in a moment.");
+      console.error("[CivicLens] Briefing generation failed:", e);
+      setError("Unable to generate the briefing right now. Please try again.");
     } finally {
       setLoading(false);
     }
   };
 
-  const insight = result && !result.empty ? result.insight : null;
+  const recommendations = Array.isArray(briefing.recommendations)
+    ? briefing.recommendations
+    : [briefing.recommendations];
 
   return (
-    <section id="ai-insights" className="relative scroll-mt-32 border-t border-white/5 py-20 sm:py-24">
-      <div className="mx-auto max-w-7xl px-5 sm:px-8">
-        <ScrollReveal>
-          <SectionHeading
-            eyebrow="AI Insights"
-            title="A briefing written from the reports"
-            description="CiviCLens reads every public report and drafts what a city analyst would: the pattern, the hotspots, and what to do next."
-            action={
-              <button
-                type="button"
-                onClick={generate}
-                disabled={loading}
-                className="inline-flex shrink-0 items-center gap-2 rounded-full bg-emerald-500 px-5 py-3 text-[13.5px] font-semibold text-[#04140E] transition-all duration-300 hover:bg-emerald-400 hover:shadow-glow-lg disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                {loading ? "Reading the city…" : insight ? "Regenerate briefing" : "Generate briefing"}
-              </button>
-            }
-          />
-        </ScrollReveal>
-
-        <div className="mt-10">
-          {error && (
-            <div className="rounded-2xl border border-rose-500/25 bg-rose-500/5 px-5 py-4 text-[13px] text-rose-200">
-              {error}
+    <section className="mx-auto max-w-7xl px-5 py-12 sm:px-8">
+      <div className="rounded-3xl border border-white/10 bg-[#061410] p-6 shadow-2xl sm:p-10">
+        <div className="flex flex-col items-start justify-between gap-6 sm:flex-row sm:items-center">
+          <div>
+            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-400">
+              <Sparkles className="h-3.5 w-3.5" />
+              AI INSIGHTS
             </div>
-          )}
+            <h2 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
+              A briefing written from the reports
+            </h2>
+            <p className="mt-2 max-w-2xl text-sm text-white/60">
+              CivicLens reads every public report and drafts what a city analyst would: the pattern, the hotspots, and
+              what to do next.
+            </p>
+          </div>
 
-          {!result && !loading && !error && (
-            <div className="rounded-3xl border border-dashed border-white/12 bg-white/[0.02] px-6 py-16 text-center">
-              <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl border border-emerald-500/25 bg-emerald-500/10">
-                <Sparkles className="h-5 w-5 text-emerald-400" />
-              </div>
-              <p className="mt-5 font-display text-xl text-white/80">No briefing generated yet.</p>
-              <p className="mx-auto mt-2 max-w-lg text-sm leading-relaxed text-white/45">
-                Generate one to turn the newest public reports into a short written read of the city — patterns,
-                hotspots and next moves.
-              </p>
-            </div>
-          )}
-
-          {loading && (
-            <div className="glass-card rounded-3xl border border-white/10 p-6">
-              <div className="h-5 w-2/3 rounded-full shimmer" />
-              <div className="mt-5 space-y-3">
-                <div className="h-3 w-full rounded-full shimmer" />
-                <div className="h-3 w-11/12 rounded-full shimmer" />
-                <div className="h-3 w-9/12 rounded-full shimmer" />
-              </div>
-            </div>
-          )}
-
-          {result && result.empty && (
-            <div className="rounded-3xl border border-white/10 bg-white/[0.02] px-6 py-12 text-center">
-              <p className="font-display text-lg text-white/80">Nothing to read yet.</p>
-              <p className="mx-auto mt-2 max-w-md text-sm text-white/45">
-                A briefing needs at least one public report. File an issue and generate it again.
-              </p>
-            </div>
-          )}
-
-          {insight && (
-            <div className="grid gap-4 lg:grid-cols-[1.25fr_0.75fr]">
-              <div className="glass-card rounded-3xl border border-white/10 p-6 shadow-panel">
-                <h3 className="font-display text-2xl font-semibold leading-snug tracking-tight text-white sm:text-[1.75rem]">
-                  {insight.headline}
-                </h3>
-                <p className="mt-4 text-[15px] leading-relaxed text-white/60">{insight.summary}</p>
-
-                <div className="mt-7 space-y-3">
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-white/35">Hotspots</div>
-                  {(insight.hotspots || []).map((spot, index) => {
-                    const tone = SEVERITY_MAP[String(spot.severity || "").toLowerCase()]?.tone || "muted";
-                    return (
-                      <div
-                        key={`${spot.area}-${index}`}
-                        className="rounded-2xl border border-white/8 bg-white/[0.02] px-4 py-4"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <span className="inline-flex items-center gap-2 text-[13.5px] font-medium text-white/90">
-                            <TriangleAlert className="h-3.5 w-3.5 text-amber-400" />
-                            {spot.area}
-                          </span>
-                          <Pill tone={tone}>{spot.severity}</Pill>
-                        </div>
-                        <p className="mt-2 text-[13px] text-white/70">{spot.issue}</p>
-                        <p className="mt-1 text-[12.5px] leading-relaxed text-white/45">{spot.signal}</p>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="glass-card h-fit rounded-3xl border border-white/10 p-6">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-white/35">
-                  Recommended moves
-                </div>
-                <ol className="mt-5 space-y-4">
-                  {(insight.recommendations || []).map((move, index) => (
-                    <li key={index} className="flex gap-3.5">
-                      <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-lg border border-emerald-500/25 bg-emerald-500/10 font-display text-[11px] font-semibold text-emerald-300">
-                        {index + 1}
-                      </span>
-                      <span className="text-[13.5px] leading-relaxed text-white/65">{move}</span>
-                    </li>
-                  ))}
-                </ol>
-                <p className="mt-7 border-t border-white/8 pt-4 text-[11px] leading-relaxed text-white/30">
-                  Written from {result.total} public report{result.total === 1 ? "" : "s"} · an AI reading of open civic
-                  data, not an official statement.
-                </p>
-              </div>
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={regenerate}
+            disabled={loading}
+            className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 text-xs font-semibold text-[#04140e] shadow-lg shadow-emerald-500/10 transition hover:bg-emerald-400 disabled:opacity-60"
+          >
+            {loading ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>Reading the city…</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-4 w-4" />
+                <span>Regenerate briefing</span>
+              </>
+            )}
+          </button>
         </div>
+
+        {error && (
+          <div className="mt-6 flex items-center gap-2 rounded-xl border border-rose-500/25 bg-rose-500/10 p-4 text-xs text-rose-200">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {!loading && (
+          <div className="mt-8 space-y-6 border-t border-white/10 pt-8">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border border-white/10 bg-black/40 p-5">
+                <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-emerald-400">
+                  <FileText className="h-4 w-4" />
+                  Executive Summary
+                </div>
+                <p className="text-xs leading-relaxed text-white/80">{briefing.summary}</p>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/40 p-5">
+                <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-amber-400">
+                  <TrendingUp className="h-4 w-4" />
+                  Primary Trend &amp; Hotspots
+                </div>
+                <p className="text-xs leading-relaxed text-white/80">{briefing.topConcern}</p>
+                <p className="mt-2 text-xs leading-relaxed text-white/60">{briefing.hotspots}</p>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/40 p-5">
+                <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-sky-400">
+                  <ShieldCheck className="h-4 w-4" />
+                  Recommended Action
+                </div>
+                <ul className="list-inside list-disc space-y-1.5 text-xs text-white/80">
+                  {recommendations.map((rec, i) => (
+                    <li key={i}>{rec}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );

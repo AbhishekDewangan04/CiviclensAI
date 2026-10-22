@@ -18,6 +18,10 @@ import { getReporterKey } from "@/lib/reportMeta";
 
 const PAGE_SIZE = 200;
 
+// The SDK / local mock may return a plain array or { items, next_cursor, has_more }.
+const toList = (res) => (Array.isArray(res) ? res : res?.items || []);
+const toCount = (res) => (typeof res === "number" ? res : res?.count ?? null);
+
 export default function Home() {
   const { toast } = useToast();
   const reporterKey = useMemo(() => getReporterKey(), []);
@@ -31,30 +35,40 @@ export default function Home() {
   const [reportOpen, setReportOpen] = useState(false);
   const [selected, setSelected] = useState(null);
   const [focus, setFocus] = useState(null);
+  const [activeTab, setActiveTab] = useState("city_map");
 
   const load = useCallback(async () => {
+    const log = (label) => (err) => {
+      console.error(`[CivicLens] ${label} failed:`, err);
+      return null;
+    };
+
     try {
       const [page, totalRes, resolvedRes, criticalRes, mine] = await Promise.all([
-        base44.entities.Report.list({ sort: "-created_date", limit: PAGE_SIZE }).catch(() => ({ items: [] })),
-        base44.entities.Report.count({}).catch(() => 0),
-        base44.entities.Report.count({ status: "resolved" }).catch(() => 0),
-        base44.entities.Report.count({ severity: "critical" }).catch(() => 0),
-        base44.entities.Report.filter({ reporter_key: reporterKey }, { sort: "-created_date", limit: 60 }).catch(() => ({ items: [] })),
+        base44.entities.Report.list({ sort: "-created_date", limit: PAGE_SIZE }).catch(log("list")),
+        base44.entities.Report.count({}).catch(log("count total")),
+        base44.entities.Report.count({ status: "resolved" }).catch(log("count resolved")),
+        base44.entities.Report.count({ severity: "critical" }).catch(log("count critical")),
+        base44.entities.Report.filter({ reporter_key: reporterKey }, { sort: "-created_date", limit: 60 }).catch(
+          log("filter mine")
+        ),
       ]);
 
-      // Extract numeric values safely
-      const total = typeof totalRes === "number" ? totalRes : (totalRes?.count ?? page?.items?.length ?? 0);
-      const resolved = typeof resolvedRes === "number" ? resolvedRes : (resolvedRes?.count ?? 0);
-      const critical = typeof criticalRes === "number" ? criticalRes : (criticalRes?.count ?? 0);
+      const list = toList(page);
+
+      // Prefer server counts, but never show fewer than the reports we actually loaded.
+      const total = Math.max(toCount(totalRes) ?? 0, list.length);
+      const resolved = toCount(resolvedRes) ?? list.filter((r) => r.status === "resolved").length;
+      const critical = toCount(criticalRes) ?? list.filter((r) => r.severity === "critical").length;
       const open = Math.max(total - resolved, 0);
 
-      setReports(page?.items || []);
-      setCursor(page?.next_cursor || null);
-      setHasMore(Boolean(page?.has_more));
+      setReports(list);
+      setCursor(Array.isArray(page) ? null : page?.next_cursor || null);
+      setHasMore(Array.isArray(page) ? false : Boolean(page?.has_more));
       setCounts({ total, resolved, open, critical });
-      setMyReports(mine?.items || []);
+      setMyReports(toList(mine));
     } catch (e) {
-      // Fallback state on error
+      console.error("[CivicLens] load failed:", e);
       setCounts({ total: 0, open: 0, resolved: 0, critical: 0 });
     }
   }, [reporterKey]);
@@ -94,15 +108,26 @@ export default function Home() {
   const loadMore = async () => {
     try {
       const page = await base44.entities.Report.list({ sort: "-created_date", limit: PAGE_SIZE, cursor });
-      setReports((previous) => [...previous, ...(page?.items || [])]);
-      setCursor(page?.next_cursor || null);
-      setHasMore(Boolean(page?.has_more));
+      setReports((previous) => [...previous, ...toList(page)]);
+      setCursor(Array.isArray(page) ? null : page?.next_cursor || null);
+      setHasMore(Array.isArray(page) ? false : Boolean(page?.has_more));
     } catch (e) {
-      // Fail silently for pagination in mock mode
+      console.error("[CivicLens] loadMore failed:", e);
     }
   };
 
-  const goTo = (id) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const goTo = (id) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  const handleTabChange = (tabId) => {
+    setActiveTab(tabId);
+    const targetId = tabId.replace("_", "-");
+    goTo(targetId);
+  };
 
   const handleCreated = async (created) => {
     setReportOpen(false);
@@ -115,13 +140,21 @@ export default function Home() {
   const handleStatusChange = async (report) => {
     const action = report.status === "resolved" ? "reopen" : "resolve";
     try {
-      await base44.functions.invoke("reportAction", { reportId: report.id, reporterKey, action });
+      if (import.meta.env.DEV) {
+        // Local mock has no "reportAction" function, so update the record directly.
+        await base44.entities.Report.update(report.id, {
+          status: action === "resolve" ? "resolved" : "pending",
+        });
+      } else {
+        await base44.functions.invoke("reportAction", { reportId: report.id, reporterKey, action });
+      }
       toast({
         title: action === "resolve" ? "Marked as resolved" : "Report reopened",
         description: report.title,
       });
       await load();
     } catch (e) {
+      console.error("[CivicLens] status change failed:", e);
       toast({ title: "That didn't go through", description: "Please try again.", variant: "destructive" });
     }
   };
@@ -136,7 +169,11 @@ export default function Home() {
 
   return (
     <div className="relative min-h-screen" style={{ overflowX: "clip" }}>
-      <SiteHeader onReport={() => setReportOpen(true)} />
+      <SiteHeader
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        onOpenReportModal={() => setReportOpen(true)}
+      />
 
       <main>
         <HeroSection
@@ -152,15 +189,19 @@ export default function Home() {
         <FeatureDispatch />
         <SeverityJourney />
 
-        <MyReportsSection
-          reports={myReports}
-          onOpen={setSelected}
-          onTrack={trackOnMap}
-          onStatusChange={handleStatusChange}
-          onReport={() => setReportOpen(true)}
-        />
+        <div id="my-reports">
+          <MyReportsSection
+            reports={myReports}
+            onOpen={setSelected}
+            onTrack={trackOnMap}
+            onStatusChange={handleStatusChange}
+            onReport={() => setReportOpen(true)}
+          />
+        </div>
 
-        <CityMapSection reports={reports} onSelect={setSelected} focus={focus} />
+        <div id="city-map">
+          <CityMapSection reports={reports} onSelect={setSelected} focus={focus} />
+        </div>
 
         {hasMore && (
           <div className="mx-auto max-w-7xl px-5 pb-8 sm:px-8">
@@ -174,8 +215,13 @@ export default function Home() {
           </div>
         )}
 
-        <AnalyticsSection reports={reports} counts={counts} />
-        <AIInsightsSection />
+        <div id="analytics">
+          <AnalyticsSection reports={reports} counts={counts} />
+        </div>
+
+        <div id="ai-insights">
+          <AIInsightsSection reports={reports} />
+        </div>
       </main>
 
       <footer className="border-t border-white/5 py-10">
@@ -185,7 +231,7 @@ export default function Home() {
               <Activity className="h-4 w-4 text-emerald-400" />
             </span>
             <div>
-              <div className="font-display text-[15px] font-semibold tracking-tight text-white">CiviCLens</div>
+              <div className="font-display text-[15px] font-semibold tracking-tight text-white">CivicLens</div>
               <div className="text-[9.5px] font-medium uppercase tracking-[0.28em] text-white/30">
                 Public Intelligence
               </div>

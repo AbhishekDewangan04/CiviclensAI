@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { base44 } from "@/api/base44Client";
 import LocationPicker from "@/components/LocationPicker";
 import { CATEGORIES, SEVERITIES, TONES, getReporterKey } from "@/lib/reportMeta";
+import "leaflet/dist/leaflet.css";
 
 const EMPTY_FORM = { title: "", description: "", category: "", severity: "medium", address: "" };
 
@@ -84,8 +85,8 @@ export default function ReportModal({ open, onOpenChange, onCreated }) {
 
   return (
     <Dialog open={open} onOpenChange={submitting ? () => {} : onOpenChange}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto border-white/10 bg-[#0A0F1A]/95 backdrop-blur-2xl sm:max-w-2xl">
-        <DialogHeader>
+      <DialogContent className="z-[3000] max-h-[85vh] my-auto overflow-y-auto border-white/10 bg-[#061410] p-6 sm:p-8 pt-8 shadow-2xl sm:max-w-2xl">
+        <DialogHeader className="pt-2">
           <DialogTitle className="font-display text-2xl font-semibold tracking-tight text-white">
             Report an issue
           </DialogTitle>
@@ -194,7 +195,13 @@ export default function ReportModal({ open, onOpenChange, onCreated }) {
               className="mt-3 border-white/10 bg-white/[0.03] text-white placeholder:text-white/25"
             />
             <div className="mt-3">
-              <LocationPicker value={coords} onChange={setCoords} />
+              {open && (
+                <LocationPicker
+                  key={open ? "open" : "closed"}
+                  value={coords}
+                  onChange={setCoords}
+                />
+              )}
             </div>
             {errors.address && <p className="mt-2 text-[12px] text-rose-400">{errors.address}</p>}
             {errors.location && <p className="mt-1 text-[12px] text-rose-400">{errors.location}</p>}
