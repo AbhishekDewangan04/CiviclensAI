@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Sparkles, Loader2, AlertCircle, FileText, TrendingUp, ShieldCheck } from "lucide-react";
-import { base44 } from "@/api/base44Client";
+import { Sparkles, Loader2, FileText, TrendingUp, ShieldCheck } from "lucide-react";
 import { CATEGORY_MAP } from "@/lib/reportMeta";
+import { getBriefing } from "@/lib/api";
 
 const plural = (n, one, many) => (n === 1 ? one : many);
 const labelOf = (value) => CATEGORY_MAP[value]?.label || value || "Other";
@@ -21,7 +21,7 @@ function buildBriefing(reports = []) {
 
   const open = reports.filter((r) => r.status !== "resolved");
   const critical = open.filter((r) => r.severity === "critical");
-  const high = open.filter((r) => r.severity === "high");
+  const medium = open.filter((r) => r.severity === "medium");
   const pending = open.filter((r) => r.status === "pending");
 
   const byCategory = {};
@@ -39,9 +39,9 @@ function buildBriefing(reports = []) {
       `Send crews to the ${critical.length} critical ${plural(critical.length, "report", "reports")} first.`
     );
   }
-  if (high.length) {
+  if (medium.length) {
     recommendations.push(
-      `Schedule the ${high.length} high-severity ${plural(high.length, "report", "reports")} for this week.`
+      `Schedule the ${medium.length} medium-severity ${plural(medium.length, "report", "reports")} for this week.`
     );
   }
   if (pending.length) {
@@ -49,21 +49,19 @@ function buildBriefing(reports = []) {
       `Review ${pending.length} ${plural(pending.length, "report that is", "reports that are")} still pending and post a status update.`
     );
   }
-
-  // Only push category trend recommendation when multiple categories exist
   if (ranked.length > 1) {
     recommendations.push(`Watch ${labelOf(topKey)}: it is the most reported category (${topCount} of ${total}).`);
   }
-
   if (!open.length) {
     recommendations.unshift("Every filed report is resolved. No action needed right now.");
   }
 
   return {
     summary: `Analysed ${total} registered civic ${plural(total, "signal", "signals")}. ${open.length} ${plural(open.length, "issue remains", "issues remain")} open, with ${critical.length} flagged at critical urgency.`,
-    topConcern: total === 1
-      ? `The only report so far is in ${labelOf(topKey).toUpperCase()}.`
-      : `The most reported category is ${labelOf(topKey).toUpperCase()}, with ${topCount} of ${total} reports.`,
+    topConcern:
+      total === 1
+        ? `The only report so far is in ${labelOf(topKey).toUpperCase()}.`
+        : `The most reported category is ${labelOf(topKey).toUpperCase()}, with ${topCount} of ${total} reports.`,
     hotspots: second
       ? `Next most reported: ${labelOf(second[0])} (${second[1]}).`
       : `All reports so far fall under ${labelOf(topKey)}.`,
@@ -71,15 +69,37 @@ function buildBriefing(reports = []) {
   };
 }
 
+// Converts the backend briefing into the shape this section renders.
+function fromBackend(result, fallback) {
+  if (!result || result.empty || !result.insight) return null;
+  const { headline, summary, hotspots, recommendations } = result.insight;
+  if (!summary) return null;
+
+  const hotspotText =
+    Array.isArray(hotspots) && hotspots.length
+      ? hotspots
+          .slice(0, 2)
+          .map((h) => `${h.area} (${h.issue})`)
+          .join(" · ")
+      : fallback.hotspots;
+
+  return {
+    summary,
+    topConcern: headline || fallback.topConcern,
+    hotspots: hotspotText,
+    recommendations:
+      Array.isArray(recommendations) && recommendations.length ? recommendations : fallback.recommendations,
+  };
+}
+
 export default function AIInsightsSection({ reports = [] }) {
   const [loading, setLoading] = useState(false);
   const [remote, setRemote] = useState(null);
-  const [error, setError] = useState("");
 
   // Recomputes whenever reports change, so filing a report updates the briefing immediately.
   const local = useMemo(() => buildBriefing(reports), [reports]);
 
-  // A remote briefing is only valid for the reports it was generated from.
+  // A backend briefing is only valid for the reports it was generated from.
   useEffect(() => {
     setRemote(null);
   }, [reports]);
@@ -88,22 +108,11 @@ export default function AIInsightsSection({ reports = [] }) {
 
   const regenerate = async () => {
     setLoading(true);
-    setError("");
     try {
-      // In dev the mocked API has no AI function, so skip straight to the local briefing.
-      if (!import.meta.env.DEV && typeof base44?.functions?.invoke === "function") {
-        try {
-          const res = await base44.functions.invoke("generateBriefing", { reports });
-          const result = res?.briefing || res?.data?.briefing;
-          if (result?.summary) setRemote(result);
-        } catch (err) {
-          console.warn("[CivicLens] Briefing function unavailable, using local briefing.", err);
-        }
-      }
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    } catch (e) {
-      console.error("[CivicLens] Briefing generation failed:", e);
-      setError("Unable to generate the briefing right now. Please try again.");
+      const mapped = fromBackend(await getBriefing(), local);
+      if (mapped) setRemote(mapped);
+    } catch (err) {
+      console.warn("[CivicLens] Backend briefing unavailable, using local briefing.", err);
     } finally {
       setLoading(false);
     }
@@ -150,13 +159,6 @@ export default function AIInsightsSection({ reports = [] }) {
             )}
           </button>
         </div>
-
-        {error && (
-          <div className="mt-6 flex items-center gap-2 rounded-xl border border-rose-500/25 bg-rose-500/10 p-4 text-xs text-rose-200">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
 
         {!loading && (
           <div className="mt-8 space-y-6 border-t border-white/10 pt-8">

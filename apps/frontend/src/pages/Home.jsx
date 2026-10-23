@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity } from "lucide-react";
-import { base44 } from "@/api/base44Client";
 import { useToast } from "@/components/ui/use-toast";
 import SiteHeader from "@/components/SiteHeader";
 import HeroSection from "@/components/HeroSection";
@@ -15,12 +14,10 @@ import AIInsightsSection from "@/components/AIInsightsSection";
 import ReportModal from "@/components/ReportModal";
 import ReportDetailModal from "@/components/ReportDetailModal";
 import { getReporterKey } from "@/lib/reportMeta";
+import { getStats, listReports, reportAction } from "@/lib/api";
 
 const PAGE_SIZE = 200;
-
-// The SDK / local mock may return a plain array or { items, next_cursor, has_more }.
-const toList = (res) => (Array.isArray(res) ? res : res?.items || []);
-const toCount = (res) => (typeof res === "number" ? res : res?.count ?? null);
+const EMPTY_PAGE = { reports: [], total: 0 };
 
 export default function Home() {
   const { toast } = useToast();
@@ -29,7 +26,6 @@ export default function Home() {
   const [reports, setReports] = useState([]);
   const [myReports, setMyReports] = useState([]);
   const [counts, setCounts] = useState({ total: 0, open: 0, resolved: 0, critical: 0 });
-  const [cursor, setCursor] = useState(null);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [reportOpen, setReportOpen] = useState(false);
@@ -38,40 +34,27 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState("city_map");
 
   const load = useCallback(async () => {
-    const log = (label) => (err) => {
-      console.error(`[CivicLens] ${label} failed:`, err);
+    const warn = (label) => (error) => {
+      console.warn(`[CivicLens] ${label} failed:`, error);
       return null;
     };
+    const [page, mine, stats] = await Promise.all([
+      listReports({ limit: PAGE_SIZE }).catch(warn("list reports")),
+      listReports({ mine: true, limit: 60 }).catch(warn("list my reports")),
+      getStats().catch(warn("stats")),
+    ]);
 
-    try {
-      const [page, totalRes, resolvedRes, criticalRes, mine] = await Promise.all([
-        base44.entities.Report.list({ sort: "-created_date", limit: PAGE_SIZE }).catch(log("list")),
-        base44.entities.Report.count({}).catch(log("count total")),
-        base44.entities.Report.count({ status: "resolved" }).catch(log("count resolved")),
-        base44.entities.Report.count({ severity: "critical" }).catch(log("count critical")),
-        base44.entities.Report.filter({ reporter_key: reporterKey }, { sort: "-created_date", limit: 60 }).catch(
-          log("filter mine")
-        ),
-      ]);
-
-      const list = toList(page);
-
-      // Prefer server counts, but never show fewer than the reports we actually loaded.
-      const total = Math.max(toCount(totalRes) ?? 0, list.length);
-      const resolved = toCount(resolvedRes) ?? list.filter((r) => r.status === "resolved").length;
-      const critical = toCount(criticalRes) ?? list.filter((r) => r.severity === "critical").length;
-      const open = Math.max(total - resolved, 0);
-
-      setReports(list);
-      setCursor(Array.isArray(page) ? null : page?.next_cursor || null);
-      setHasMore(Array.isArray(page) ? false : Boolean(page?.has_more));
-      setCounts({ total, resolved, open, critical });
-      setMyReports(toList(mine));
-    } catch (e) {
-      console.error("[CivicLens] load failed:", e);
-      setCounts({ total: 0, open: 0, resolved: 0, critical: 0 });
-    }
-  }, [reporterKey]);
+    const safePage = page || EMPTY_PAGE;
+    setReports(safePage.reports);
+    setHasMore(safePage.total > safePage.reports.length);
+    setMyReports((mine || EMPTY_PAGE).reports);
+    setCounts({
+      total: stats?.total ?? safePage.total,
+      open: stats?.open ?? 0,
+      resolved: stats?.resolved ?? 0,
+      critical: stats?.critical_open ?? 0,
+    });
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -87,46 +70,25 @@ export default function Home() {
     };
   }, [load]);
 
-  useEffect(() => {
-    // Disable real-time socket subscription in local development to avoid connection timeouts
-    if (import.meta.env.DEV) return;
-
-    if (typeof base44.entities?.Report?.subscribe === "function") {
-      try {
-        const unsubscribe = base44.entities.Report.subscribe(() => {
-          load();
-        });
-        return () => {
-          if (typeof unsubscribe === "function") unsubscribe();
-        };
-      } catch (e) {
-        // Ignored in local offline/mock mode
-      }
-    }
-  }, [load]);
-
   const loadMore = async () => {
     try {
-      const page = await base44.entities.Report.list({ sort: "-created_date", limit: PAGE_SIZE, cursor });
-      setReports((previous) => [...previous, ...toList(page)]);
-      setCursor(Array.isArray(page) ? null : page?.next_cursor || null);
-      setHasMore(Array.isArray(page) ? false : Boolean(page?.has_more));
-    } catch (e) {
-      console.error("[CivicLens] loadMore failed:", e);
+      const page = await listReports({ limit: PAGE_SIZE, offset: reports.length });
+      const next = [...reports, ...page.reports];
+      setReports(next);
+      setHasMore(page.total > next.length);
+    } catch (error) {
+      console.warn("[CivicLens] load more failed:", error);
     }
   };
 
   const goTo = (id) => {
     const el = document.getElementById(id);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   const handleTabChange = (tabId) => {
     setActiveTab(tabId);
-    const targetId = tabId.replace("_", "-");
-    goTo(targetId);
+    goTo(tabId.replace("_", "-"));
   };
 
   const handleCreated = async (created) => {
@@ -140,22 +102,19 @@ export default function Home() {
   const handleStatusChange = async (report) => {
     const action = report.status === "resolved" ? "reopen" : "resolve";
     try {
-      if (import.meta.env.DEV) {
-        // Local mock has no "reportAction" function, so update the record directly.
-        await base44.entities.Report.update(report.id, {
-          status: action === "resolve" ? "resolved" : "pending",
-        });
-      } else {
-        await base44.functions.invoke("reportAction", { reportId: report.id, reporterKey, action });
-      }
+      await reportAction(report.id, action);
       toast({
         title: action === "resolve" ? "Marked as resolved" : "Report reopened",
         description: report.title,
       });
       await load();
-    } catch (e) {
-      console.error("[CivicLens] status change failed:", e);
-      toast({ title: "That didn't go through", description: "Please try again.", variant: "destructive" });
+    } catch (error) {
+      console.error("[CivicLens] report action failed:", error);
+      toast({
+        title: "That didn't go through",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -200,7 +159,7 @@ export default function Home() {
         </div>
 
         <div id="city-map">
-          <CityMapSection reports={reports} onSelect={setSelected} focus={focus} />
+          <CityMapSection reports={reports} onSelectReport={setSelected} onSelect={setSelected} focus={focus} />
         </div>
 
         {hasMore && (

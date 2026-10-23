@@ -1,13 +1,13 @@
-import React, { useEffect, useRef, useState } from "react";
-import { Camera, Loader2, X } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { base44 } from "@/api/base44Client";
 import LocationPicker from "@/components/LocationPicker";
-import { CATEGORIES, SEVERITIES, TONES, getReporterKey } from "@/lib/reportMeta";
+import { CATEGORIES, SEVERITIES, TONES } from "@/lib/reportMeta";
+import { createReport } from "@/lib/api";
 import "leaflet/dist/leaflet.css";
 
 const EMPTY_FORM = { title: "", description: "", category: "", severity: "medium", address: "" };
@@ -15,72 +15,58 @@ const EMPTY_FORM = { title: "", description: "", category: "", severity: "medium
 export default function ReportModal({ open, onOpenChange, onCreated }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [coords, setCoords] = useState(null);
-  const [photo, setPhoto] = useState(null);
-  const [preview, setPreview] = useState("");
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [stage, setStage] = useState("");
-  const fileInput = useRef(null);
 
   useEffect(() => {
     if (open) {
       setForm(EMPTY_FORM);
       setCoords(null);
-      setPhoto(null);
       setErrors({});
       setStage("");
     }
   }, [open]);
-
-  useEffect(() => {
-    if (!photo) {
-      setPreview("");
-      return;
-    }
-    const url = URL.createObjectURL(photo);
-    setPreview(url);
-    return () => URL.revokeObjectURL(url);
-  }, [photo]);
 
   const update = (key) => (event) => setForm((previous) => ({ ...previous, [key]: event.target.value }));
 
   const submit = async () => {
     const next = {};
     if (form.title.trim().length < 4) next.title = "Give the issue a short, clear title.";
-    if (!form.category) next.category = "Pick the closest category.";
     if (form.address.trim().length < 3) next.address = "Add the street or area name.";
     if (!coords) next.location = "Drop a pin on the map so it appears on the city map.";
     setErrors(next);
     if (Object.keys(next).length) return;
 
+    // The backend classifies category and severity itself, so the picks are sent as hints in the text.
+    const hints = [];
+    const categoryLabel = CATEGORIES.find((item) => item.value === form.category)?.label;
+    if (categoryLabel) hints.push(`Category: ${categoryLabel}`);
+    if (form.severity) hints.push(`Urgency: ${form.severity}`);
+    const details = [form.description.trim(), hints.join(" · ")].filter(Boolean).join("\n");
+
     setSubmitting(true);
+    setStage("Filing your report…");
+    let created = null;
+
     try {
-      let photoUrl = "";
-      if (photo) {
-        setStage("Uploading photo…");
-        const uploaded = await base44.integrations.Core.UploadPublicFile({ file: photo });
-        photoUrl = uploaded.file_url;
-      }
-      setStage("Filing your report…");
-      const created = await base44.entities.Report.create({
-        title: form.title.trim(),
-        description: form.description.trim(),
-        category: form.category,
-        severity: form.severity,
-        address: form.address.trim(),
+      created = await createReport({
+        title: form.title,
+        details,
+        address: form.address,
         lat: coords.lat,
         lng: coords.lng,
-        photo_url: photoUrl,
-        status: "pending",
-        reporter_key: getReporterKey(),
       });
-      onCreated(created);
     } catch (e) {
-      setErrors({ submit: "That report couldn't be filed. Please try again." });
+      console.error("[CivicLens] filing report failed:", e);
+      setErrors({ submit: `That report couldn't be filed: ${e?.message || "please try again."}` });
+      return;
     } finally {
       setSubmitting(false);
       setStage("");
     }
+
+    onCreated(created);
   };
 
   return (
@@ -97,7 +83,9 @@ export default function ReportModal({ open, onOpenChange, onCreated }) {
 
         <div className="mt-6 space-y-6">
           <div>
-            <Label className="text-[11px] font-medium uppercase tracking-[0.18em] text-white/45">Category</Label>
+            <Label className="text-[11px] font-medium uppercase tracking-[0.18em] text-white/45">
+              Category <span className="text-white/25">(optional)</span>
+            </Label>
             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
               {CATEGORIES.map((item) => {
                 const Icon = item.Icon;
@@ -106,7 +94,12 @@ export default function ReportModal({ open, onOpenChange, onCreated }) {
                   <button
                     key={item.value}
                     type="button"
-                    onClick={() => setForm((previous) => ({ ...previous, category: item.value }))}
+                    onClick={() =>
+                      setForm((previous) => ({
+                        ...previous,
+                        category: previous.category === item.value ? "" : item.value,
+                      }))
+                    }
                     className={cn(
                       "flex flex-col items-start gap-2 rounded-2xl border px-3 py-3 text-left transition-all duration-200",
                       active
@@ -122,7 +115,6 @@ export default function ReportModal({ open, onOpenChange, onCreated }) {
                 );
               })}
             </div>
-            {errors.category && <p className="mt-2 text-[12px] text-rose-400">{errors.category}</p>}
           </div>
 
           <div>
@@ -195,54 +187,10 @@ export default function ReportModal({ open, onOpenChange, onCreated }) {
               className="mt-3 border-white/10 bg-white/[0.03] text-white placeholder:text-white/25"
             />
             <div className="mt-3">
-              {open && (
-                <LocationPicker
-                  key={open ? "open" : "closed"}
-                  value={coords}
-                  onChange={setCoords}
-                />
-              )}
+              {open && <LocationPicker key="open" value={coords} onChange={setCoords} />}
             </div>
             {errors.address && <p className="mt-2 text-[12px] text-rose-400">{errors.address}</p>}
             {errors.location && <p className="mt-1 text-[12px] text-rose-400">{errors.location}</p>}
-          </div>
-
-          <div>
-            <Label className="text-[11px] font-medium uppercase tracking-[0.18em] text-white/45">
-              Photo <span className="text-white/25">(optional)</span>
-            </Label>
-            <div className="mt-3 flex items-center gap-4">
-              {preview ? (
-                <div className="relative h-20 w-28 overflow-hidden rounded-xl border border-white/10">
-                  <img src={preview} alt="Selected issue photo" className="h-full w-full object-cover" />
-                  <button
-                    type="button"
-                    onClick={() => setPhoto(null)}
-                    className="absolute right-1 top-1 grid h-6 w-6 place-items-center rounded-full bg-black/70 text-white/80 transition hover:text-white"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              ) : null}
-              <input
-                ref={fileInput}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(event) => setPhoto(event.target.files?.[0] || null)}
-              />
-              <button
-                type="button"
-                onClick={() => fileInput.current?.click()}
-                className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-4 py-2.5 text-[12.5px] font-medium text-white/70 transition hover:border-emerald-500/30 hover:text-white"
-              >
-                <Camera className="h-3.5 w-3.5" />
-                {photo ? "Replace photo" : "Add a photo"}
-              </button>
-            </div>
-            <p className="mt-2 text-[11.5px] leading-relaxed text-white/35">
-              Photos are stored publicly — anyone with the link can open them.
-            </p>
           </div>
 
           {errors.submit && (
