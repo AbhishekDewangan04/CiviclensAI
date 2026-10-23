@@ -22,9 +22,12 @@ describe("GET /reports/stats", () => {
       water_supply: 0,
       streetlight: 0,
       drainage: 0,
+      public_safety: 0,
+      parks: 0,
+      traffic: 0,
       other: 0,
     });
-    expect(stats.by_severity).toEqual({ low: 0, medium: 0, critical: 0 });
+    expect(stats.by_severity).toEqual({ low: 0, medium: 0, high: 0, critical: 0 });
   });
 
   it("computes real counts from the repository", async () => {
@@ -64,8 +67,11 @@ describe("GET /reports/stats", () => {
       water_supply: 0,
       streetlight: 0,
       drainage: 1,
+      public_safety: 0,
+      parks: 0,
+      traffic: 0,
       other: 0,
     });
-    expect(stats.by_severity).toEqual({ low: 1, medium: 1, critical: 2 });
+    expect(stats.by_severity).toEqual({ low: 1, medium: 1, high: 0, critical: 2 });
   });
 });

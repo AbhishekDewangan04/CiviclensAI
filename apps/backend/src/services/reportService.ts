@@ -26,6 +26,7 @@ import {
 } from "../types";
 import { buildBriefing } from "./briefing";
 import { haversineMeters, localHotspots, withinBbox } from "./geo";
+import { classifiableText, classifyText, findDuplicates, gradeSeverity } from "./localIntelligence";
 import type { MlClient } from "./mlClient";
 
 const DUPLICATE_RADIUS_M = 200;
@@ -90,7 +91,7 @@ function nearbyOpenCandidates(reports: readonly Report[], lat: number, lng: numb
     .filter((entry) => entry.distance <= DUPLICATE_RADIUS_M)
     .sort((a, b) => a.distance - b.distance)
     .slice(0, MAX_DUPLICATE_CANDIDATES)
-    .map((entry) => ({ id: entry.report.id, text: entry.report.description }));
+    .map((entry) => ({ id: entry.report.id, text: classifiableText(entry.report.description) }));
 }
 
 interface Enrichment {
@@ -131,7 +132,7 @@ export class ReportService {
   async createReport(input: CreateReportInput, reporterKey: string): Promise<CreateReportResult> {
     const existing = await this.repo.list();
     const candidates = nearbyOpenCandidates(existing, input.lat, input.lng);
-    const enrichment = await this.enrich(input.description, candidates);
+    const enrichment = await this.enrich(input, candidates);
 
     const timestamp = this.now().toISOString();
     const report: Report = {
@@ -282,41 +283,79 @@ export class ReportService {
     }
   }
 
-  /** Any ML failure (error, timeout, malformed body) degrades to safe defaults. */
-  private async enrich(description: string, candidates: MlCandidate[]): Promise<Enrichment> {
-    try {
-      const [classification, severity, matches] = await Promise.all([
-        this.ml.classify(description),
-        this.ml.severity(description),
-        candidates.length > 0
-          ? this.ml.duplicates(description, candidates)
-          : Promise.resolve<DuplicateMatch[]>([]),
-      ]);
+  /**
+   * Category and severity: what the reporter picked always wins. Otherwise the
+   * built-in classifier decides, with the ML service as a second opinion. Each ML
+   * call is judged on its own, so one missing or failing endpoint can no longer
+   * throw away everything, and a report is never filed as "other / low" just
+   * because the ML service is unreachable.
+   */
+  private async enrich(input: CreateReportInput, candidates: MlCandidate[]): Promise<Enrichment> {
+    // Address words ("central park", "street 99") must not steer the classification.
+    const text = classifiableText(input.description);
+    const local = classifyText(text);
+    const grade = gradeSeverity(text);
 
-      const knownIds = new Set(candidates.map((candidate) => candidate.id));
-      const duplicates = matches
-        .filter((match) => knownIds.has(match.id))
-        .sort((a, b) => b.similarity - a.similarity)
-        .map((match) => ({ id: match.id, similarity: match.similarity }));
+    const [mlClass, mlSeverity, mlDuplicates] = await Promise.allSettled([
+      this.ml.classify(text),
+      this.ml.severity(text),
+      candidates.length > 0
+        ? this.ml.duplicates(text, candidates)
+        : Promise.resolve<DuplicateMatch[]>([]),
+    ]);
 
-      return {
-        category: classification.category,
-        severity: severity.severity,
-        ml_status: "ok",
-        ml_category_score: classification.score,
-        severity_signals: severity.signals,
-        duplicates,
-      };
-    } catch (error) {
-      this.logger.warn(`ML enrichment unavailable, saving defaults (${describeError(error)})`);
-      return {
-        category: "other",
-        severity: "low",
-        ml_status: "unavailable",
-        ml_category_score: null,
-        severity_signals: [],
-        duplicates: [],
-      };
+    const failures: string[] = [];
+    if (mlClass.status === "rejected") failures.push(`classify: ${describeError(mlClass.reason)}`);
+    if (mlSeverity.status === "rejected") failures.push(`severity: ${describeError(mlSeverity.reason)}`);
+    if (mlDuplicates.status === "rejected") failures.push(`duplicates: ${describeError(mlDuplicates.reason)}`);
+    if (failures.length > 0) {
+      this.logger.warn(`ML call(s) failed, using the built-in engine (${failures.join("; ")})`);
     }
+
+    // Category: reporter's pick > built-in classifier > ML classifier > "other".
+    let category: Category;
+    let score: number | null;
+    if (input.category !== undefined && input.category !== "other") {
+      category = input.category;
+      score = null;
+    } else if (local.category !== "other") {
+      category = local.category;
+      score = local.score;
+    } else if (mlClass.status === "fulfilled" && mlClass.value.category !== "other") {
+      category = mlClass.value.category;
+      score = mlClass.value.score;
+    } else {
+      category = "other";
+      score = mlClass.status === "fulfilled" ? mlClass.value.score : null;
+    }
+
+    // Severity: reporter's pick > built-in grader > ML grader > "low".
+    const mlSeverityValue = mlSeverity.status === "fulfilled" ? mlSeverity.value : undefined;
+    let severity: Severity;
+    if (input.severity !== undefined) {
+      severity = input.severity;
+    } else if (grade.signals.length > 0 || mlSeverityValue === undefined) {
+      severity = grade.severity;
+    } else {
+      severity = mlSeverityValue.severity;
+    }
+    const signals = grade.signals.length > 0 ? grade.signals : (mlSeverityValue?.signals ?? []);
+
+    // Duplicates: ML when it answers, otherwise the built-in matcher.
+    const knownIds = new Set(candidates.map((candidate) => candidate.id));
+    const matches = mlDuplicates.status === "fulfilled" ? mlDuplicates.value : findDuplicates(text, candidates);
+    const duplicates = matches
+      .filter((match) => knownIds.has(match.id))
+      .sort((a, b) => b.similarity - a.similarity)
+      .map((match) => ({ id: match.id, similarity: match.similarity }));
+
+    return {
+      category,
+      severity,
+      ml_status: mlClass.status === "fulfilled" ? "ok" : "unavailable",
+      ml_category_score: score,
+      severity_signals: signals,
+      duplicates,
+    };
   }
 }

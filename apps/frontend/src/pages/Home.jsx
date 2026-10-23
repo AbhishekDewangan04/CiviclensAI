@@ -15,8 +15,10 @@ import ReportModal from "@/components/ReportModal";
 import ReportDetailModal from "@/components/ReportDetailModal";
 import { getReporterKey } from "@/lib/reportMeta";
 import { getStats, listReports, reportAction } from "@/lib/api";
+import AmbientBackground from "@/components/AmbientBackground";
 
 const PAGE_SIZE = 200;
+const HEADER_OFFSET = 100;
 const EMPTY_PAGE = { reports: [], total: 0 };
 
 export default function Home() {
@@ -81,9 +83,12 @@ export default function Home() {
     }
   };
 
+  // Leaves room for the fixed header so the section heading isn't hidden underneath it.
   const goTo = (id) => {
     const el = document.getElementById(id);
-    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (!el) return;
+    const top = el.getBoundingClientRect().top + window.scrollY - HEADER_OFFSET;
+    window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
   };
 
   const handleTabChange = (tabId) => {
@@ -110,6 +115,12 @@ export default function Home() {
       await load();
     } catch (error) {
       console.error("[CivicLens] report action failed:", error);
+      if (error?.status === 409) {
+        // The report was already in that state (e.g. resolved in another tab): just refresh.
+        toast({ title: "Already up to date", description: "Refreshed the latest status." });
+        await load();
+        return;
+      }
       toast({
         title: "That didn't go through",
         description: error?.message || "Please try again.",
@@ -128,6 +139,8 @@ export default function Home() {
 
   return (
     <div className="relative min-h-screen" style={{ overflowX: "clip" }}>
+      <AmbientBackground />
+
       <SiteHeader
         activeTab={activeTab}
         onTabChange={handleTabChange}

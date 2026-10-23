@@ -36,6 +36,9 @@ export const createReportBodySchema = z.object({
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
   image_url: httpUrlSchema.optional(),
+  /** What the reporter picked. When present it wins over automatic classification. */
+  category: categorySchema.optional(),
+  severity: severitySchema.optional(),
 });
 export type CreateReportInput = z.infer<typeof createReportBodySchema>;
 

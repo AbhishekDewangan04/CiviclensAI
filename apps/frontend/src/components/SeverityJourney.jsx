@@ -52,157 +52,48 @@ function accentAt(p) {
   return cols[2];
 }
 
-// Amount of wheel / touch travel (px) needed to go from Low (0) to Critical (1).
+// Page-scroll distance (px) the card stays pinned while going Low (0) -> Critical (1).
 const TRAVEL_PX = 1400;
 // Navbar height, so the card is centred in the visible area below it.
 const NAV_OFFSET = 40;
 
 /**
- * Locks page scroll while the section is centred on screen and converts
- * wheel / touch / keyboard input into 0 → 1 progress. When progress reaches
- * either end the lock releases and the page scrolls normally again.
+ * Progress (0 -> 1) derived purely from where the section sits in the page.
+ *
+ * The card is pinned with CSS `position: sticky`, so the browser does all the
+ * scrolling itself. Nothing here blocks wheel/touch input or calls scrollTo,
+ * which means every scroll method works and can never get stuck: mouse wheel,
+ * trackpad momentum, middle-click autoscroll, scrollbar drag, keyboard, touch,
+ * and programmatic scrollIntoView.
  */
-function useScrollLockProgress(ref) {
+function useSectionProgress(ref) {
   const [progress, setProgress] = useState(0);
 
   useEffect(() => {
     const node = ref.current;
     if (!node) return undefined;
 
-    const s = {
-      target: 0,
-      current: 0,
-      locked: false,
-      lockY: 0,
-      prevD: null,
-      raf: 0,
-      touchY: null,
+    let raf = 0;
+
+    const update = () => {
+      raf = 0;
+      const { top } = node.getBoundingClientRect();
+      const next = clamp01(-top / TRAVEL_PX);
+      setProgress((prev) => (Math.abs(prev - next) < 0.0005 ? prev : next));
     };
 
-    const tick = () => {
-      const diff = s.target - s.current;
-      s.current = Math.abs(diff) < 0.0005 ? s.target : s.current + diff * 0.14;
-      setProgress(s.current);
-      s.raf = s.current !== s.target ? window.requestAnimationFrame(tick) : 0;
-    };
-    const kick = () => {
-      if (!s.raf) s.raf = window.requestAnimationFrame(tick);
-    };
-    const jumpTo = (value) => {
-      s.target = value;
-      s.current = value;
-      setProgress(value);
+    const schedule = () => {
+      if (!raf) raf = window.requestAnimationFrame(update);
     };
 
-    // Distance between the section's centre and the target screen centre.
-    const measure = () => {
-      const r = node.getBoundingClientRect();
-      return { r, d: r.top + r.height / 2 - (window.innerHeight / 2 + NAV_OFFSET) };
-    };
-
-    const release = () => {
-      s.locked = false;
-      s.touchY = null;
-      s.prevD = measure().d;
-    };
-
-    const advance = (delta) => {
-      const next = s.target + delta / TRAVEL_PX;
-      if (delta > 0 && next >= 1) {
-        s.target = 1;
-        release();
-      } else if (delta < 0 && next <= 0) {
-        s.target = 0;
-        release();
-      } else {
-        s.target = clamp01(next);
-      }
-      kick();
-    };
-
-    const engage = (d) => {
-      window.scrollTo({ top: window.scrollY + d, behavior: "instant" });
-      s.lockY = window.scrollY;
-      s.locked = true;
-      s.prevD = 0;
-    };
-
-    const onScroll = () => {
-      if (s.locked) {
-        if (window.scrollY !== s.lockY) window.scrollTo({ top: s.lockY, behavior: "instant" });
-        return;
-      }
-
-      const { r, d } = measure();
-
-      // Fully off-screen: park progress at the matching end.
-      if (r.top > window.innerHeight && s.target !== 0) jumpTo(0);
-      else if (r.bottom < 0 && s.target !== 1) jumpTo(1);
-
-      const prev = s.prevD;
-      s.prevD = d;
-      if (prev === null) return;
-
-      const goingDown = prev > d;
-      const crossedDown = prev > 0 && d <= 0 && goingDown && s.target < 1;
-      const crossedUp = prev < 0 && d >= 0 && !goingDown && s.target > 0;
-      if (crossedDown || crossedUp) engage(d);
-    };
-
-    const onWheel = (e) => {
-      if (!s.locked) return;
-      e.preventDefault();
-      const unit = e.deltaMode === 1 ? 16 : 1;
-      const delta = Math.max(-120, Math.min(120, e.deltaY * unit));
-      advance(delta);
-    };
-
-    const onTouchStart = (e) => {
-      s.touchY = e.touches[0].clientY;
-    };
-    const onTouchMove = (e) => {
-      if (!s.locked) return;
-      e.preventDefault();
-      const y = e.touches[0].clientY;
-      if (s.touchY !== null) advance((s.touchY - y) * 2.4);
-      s.touchY = y;
-    };
-
-    const onKeyDown = (e) => {
-      if (!s.locked) return;
-      const tag = (e.target && e.target.tagName) || "";
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      const step = TRAVEL_PX / 6;
-      let delta = 0;
-      if (e.key === "ArrowDown") delta = step / 2;
-      else if (e.key === "ArrowUp") delta = -step / 2;
-      else if (e.key === "PageDown" || (e.key === " " && !e.shiftKey)) delta = step;
-      else if (e.key === "PageUp" || (e.key === " " && e.shiftKey)) delta = -step;
-      else if (e.key === "End") delta = TRAVEL_PX;
-      else if (e.key === "Home") delta = -TRAVEL_PX;
-      else return;
-      e.preventDefault();
-      advance(delta);
-    };
-
-    // Initial state (handles reloads in the middle of the page).
-    const init = measure();
-    s.prevD = init.d;
-    if (init.r.bottom < 0) jumpTo(1);
-
-    window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("wheel", onWheel, { passive: false });
-    window.addEventListener("touchstart", onTouchStart, { passive: true });
-    window.addEventListener("touchmove", onTouchMove, { passive: false });
-    window.addEventListener("keydown", onKeyDown);
+    update();
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
 
     return () => {
-      if (s.raf) window.cancelAnimationFrame(s.raf);
-      window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("wheel", onWheel);
-      window.removeEventListener("touchstart", onTouchStart);
-      window.removeEventListener("touchmove", onTouchMove);
-      window.removeEventListener("keydown", onKeyDown);
+      if (raf) window.cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
     };
   }, [ref]);
 
@@ -211,7 +102,7 @@ function useScrollLockProgress(ref) {
 
 export default function SeverityJourney() {
   const ref = useRef(null);
-  const progress = useScrollLockProgress(ref);
+  const progress = useSectionProgress(ref);
 
   const p = clamp01(progress);
   const accent = accentAt(p);
@@ -220,11 +111,18 @@ export default function SeverityJourney() {
   const activeStage = Math.min(2, Math.floor(p * 2.999));
 
   return (
-    <section ref={ref} className="relative mb-0 mt-28 pb-0 sm:mt-40">
-      <div className="relative flex flex-col items-center justify-center py-0">
+    <section
+      ref={ref}
+      className="relative mb-0 mt-28 pb-0 sm:mt-40"
+      style={{ height: `calc(100vh + ${TRAVEL_PX}px)` }}
+    >
+      <div
+        className="sticky top-0 flex flex-col items-center justify-center"
+        style={{ height: "100vh", paddingTop: NAV_OFFSET * 2 }}
+      >
         {/* Glow Backdrop */}
         <div
-          className="pointer-events-none absolute inset-0 -z-10 transition-all duration-300"
+          className="pointer-events-none absolute inset-0 -z-10"
           style={{
             background: `radial-gradient(circle at 50% 50%, ${rgba(accent, 0.15)}, transparent 60%)`,
           }}
@@ -246,7 +144,7 @@ export default function SeverityJourney() {
         {/* 3D Glass Card */}
         <div className="relative mx-auto w-[min(90vw,560px)]">
           <div
-            className="glass-card relative overflow-hidden rounded-3xl border p-6 shadow-panel transition-all duration-200 sm:p-8"
+            className="glass-card relative overflow-hidden rounded-3xl border p-6 shadow-panel sm:p-8"
             style={{
               transform: "perspective(1200px) rotateX(6deg) rotateY(-8deg)",
               borderColor: rgba(accent, 0.35),
@@ -262,7 +160,7 @@ export default function SeverityJourney() {
                 return (
                   <div
                     key={stage.label}
-                    className="absolute inset-0 flex flex-col transition-opacity duration-150"
+                    className="absolute inset-0 flex flex-col"
                     style={{
                       opacity,
                       visibility: opacity > 0.01 ? "visible" : "hidden",

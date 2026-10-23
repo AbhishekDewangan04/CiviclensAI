@@ -124,7 +124,7 @@ export default function AIInsightsSection({ reports = [] }) {
 
   return (
     <section className="mx-auto max-w-7xl px-5 py-12 sm:px-8">
-      <div className="rounded-3xl border border-white/10 bg-[#061410] p-6 shadow-2xl sm:p-10">
+      <div className="rounded-3xl border border-white/10 bg-[#0a0f18]/80 p-6 shadow-2xl sm:p-10">
         <div className="flex flex-col items-start justify-between gap-6 sm:flex-row sm:items-center">
           <div>
             <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-400">

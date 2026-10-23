@@ -19,6 +19,10 @@ interface CreateBody {
   ml_status: string;
 }
 
+// Neutral text that matches no category keywords, so the backend's local
+// classifier returns "other" and the ML result / safe defaults are what we test.
+const NEUTRAL_DESCRIPTION = "Something unusual happened near the corner shop";
+
 describe("POST /reports", () => {
   it("creates a report enriched by the ML service", async () => {
     const ml = createFakeMl({
@@ -29,6 +33,7 @@ describe("POST /reports", () => {
 
     const res = await postReport(app, {
       ...validReportBody,
+      description: NEUTRAL_DESCRIPTION,
       image_url: "https://example.com/photo.jpg",
     });
     const body = res.body as CreateBody;
@@ -51,7 +56,10 @@ describe("POST /reports", () => {
   it("still returns 201 with safe defaults when the ML service throws", async () => {
     const { app, repo } = buildTestApp({ ml: createFailingMl() });
 
-    const res = await postReport(app, validReportBody);
+    const res = await postReport(app, {
+      ...validReportBody,
+      description: NEUTRAL_DESCRIPTION,
+    });
     const body = res.body as CreateBody;
 
     expect(res.status).toBe(201);
@@ -76,7 +84,10 @@ describe("POST /reports", () => {
     });
     const { app } = buildTestApp({ ml });
 
-    const res = await postReport(app, validReportBody);
+    const res = await postReport(app, {
+      ...validReportBody,
+      description: NEUTRAL_DESCRIPTION,
+    });
     const body = res.body as CreateBody;
 
     expect(res.status).toBe(201);

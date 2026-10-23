@@ -4,11 +4,14 @@ export const CATEGORIES = [
   "water_supply",
   "streetlight",
   "drainage",
+  "public_safety",
+  "parks",
+  "traffic",
   "other",
 ] as const;
 export type Category = (typeof CATEGORIES)[number];
 
-export const SEVERITIES = ["low", "medium", "critical"] as const;
+export const SEVERITIES = ["low", "medium", "high", "critical"] as const;
 export type Severity = (typeof SEVERITIES)[number];
 
 export const STATUSES = ["open", "resolved"] as const;

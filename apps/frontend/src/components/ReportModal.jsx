@@ -38,24 +38,21 @@ export default function ReportModal({ open, onOpenChange, onCreated }) {
     setErrors(next);
     if (Object.keys(next).length) return;
 
-    // The backend classifies category and severity itself, so the picks are sent as hints in the text.
-    const hints = [];
-    const categoryLabel = CATEGORIES.find((item) => item.value === form.category)?.label;
-    if (categoryLabel) hints.push(`Category: ${categoryLabel}`);
-    if (form.severity) hints.push(`Urgency: ${form.severity}`);
-    const details = [form.description.trim(), hints.join(" · ")].filter(Boolean).join("\n");
-
     setSubmitting(true);
     setStage("Filing your report…");
     let created = null;
 
     try {
+      // category and severity are sent as real fields (see createReport in api.js),
+      // so the backend uses the reporter's picks instead of guessing from the text.
       created = await createReport({
         title: form.title,
-        details,
+        details: form.description.trim(),
         address: form.address,
         lat: coords.lat,
         lng: coords.lng,
+        category: form.category,
+        severity: form.severity,
       });
     } catch (e) {
       console.error("[CivicLens] filing report failed:", e);
@@ -71,7 +68,7 @@ export default function ReportModal({ open, onOpenChange, onCreated }) {
 
   return (
     <Dialog open={open} onOpenChange={submitting ? () => {} : onOpenChange}>
-      <DialogContent className="z-[3000] max-h-[85vh] my-auto overflow-y-auto border-white/10 bg-[#061410] p-6 sm:p-8 pt-8 shadow-2xl sm:max-w-2xl">
+      <DialogContent className="z-[3000] max-h-[85vh] my-auto overflow-y-auto border-white/10 bg-[#0a0f18]/80 p-6 sm:p-8 pt-8 shadow-2xl sm:max-w-2xl">
         <DialogHeader className="pt-2">
           <DialogTitle className="font-display text-2xl font-semibold tracking-tight text-white">
             Report an issue

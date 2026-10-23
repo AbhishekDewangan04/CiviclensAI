@@ -2,14 +2,29 @@ import { getReporterKey } from "@/lib/reportMeta";
 
 const BASE = (import.meta.env.VITE_API_BASE_URL || "http://localhost:3001").replace(/\/+$/, "");
 
+// Backend category -> the category ids used by the UI (see CATEGORIES in reportMeta.js).
 const CATEGORY_MAP = {
   pothole: "roads",
   garbage: "waste",
   water_supply: "water",
   streetlight: "streetlights",
   drainage: "water",
+  public_safety: "safety",
+  parks: "parks",
+  traffic: "traffic",
   other: "other",
 };
+// UI category -> backend category. "other" is left out on purpose: the backend then classifies it.
+const CATEGORY_TO_API = {
+  roads: "pothole",
+  waste: "garbage",
+  water: "water_supply",
+  streetlights: "streetlight",
+  safety: "public_safety",
+  parks: "parks",
+  traffic: "traffic",
+};
+const SEVERITIES = ["low", "medium", "high", "critical"];
 const STATUS_MAP = { open: "pending", resolved: "resolved" };
 
 async function request(path, { method = "GET", body } = {}) {
@@ -92,11 +107,18 @@ export function getStats() {
   return request("/reports/stats");
 }
 
-export async function createReport({ title, details, address, lat, lng }) {
-  const data = await request("/reports", {
-    method: "POST",
-    body: { description: composeDescription({ title, details, address }), lat, lng },
-  });
+// `category` and `severity` are what the reporter picked in the modal. They are sent as real
+// fields, so the backend uses them instead of guessing from the text.
+export async function createReport({ title, details, address, lat, lng, category, severity }) {
+  const apiCategory = CATEGORY_TO_API[category];
+  const body = {
+    description: composeDescription({ title, details, address }),
+    lat,
+    lng,
+    ...(apiCategory ? { category: apiCategory } : {}),
+    ...(SEVERITIES.includes(severity) ? { severity } : {}),
+  };
+  const data = await request("/reports", { method: "POST", body });
   return toReport(data.report);
 }
 

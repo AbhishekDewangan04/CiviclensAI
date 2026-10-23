@@ -1,7 +1,8 @@
+@import "leaflet/dist/leaflet.css";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-@import "leaflet/dist/leaflet.css";
+
 @layer base {
   :root {
     color-scheme: dark;
@@ -13,13 +14,25 @@
     padding: 0;
     width: 100%;
     min-height: 100vh;
-    background-color: #04140e;
     color: #f3f4f6;
     font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
     /* Upscale base font & layout spacing so 100% zoom looks like 110% */
     font-size: 17px;
     line-height: 1.6;
+  }
+
+  /* Navy base lives on html; body stays transparent so the fixed
+     AmbientBackground layer (grid + glows) is visible instead of being covered. */
+  html {
+    background-color: #090c13;
+    /* Horizontal clipping lives ONLY on html. Putting overflow-x: hidden on body
+       as well turns body into a scroll container, which silently breaks
+       position: sticky (the pinned severity card). */
     overflow-x: hidden;
+  }
+
+  body {
+    background-color: transparent;
   }
 
   * {
@@ -40,7 +53,7 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #04140e;
+  background: #090c13;
 }
 
 ::-webkit-scrollbar-thumb {

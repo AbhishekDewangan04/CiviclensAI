@@ -5,7 +5,9 @@ const MAX_HOTSPOTS = 3;
 const MAX_CRITICAL = 5;
 const MAX_DESCRIPTION_LENGTH = 140;
 
-const CATEGORY_LABELS: Record<Category, string> = {
+// Add friendly labels for the new categories here (keys must match types.ts).
+// Any category missing from this map falls back to categoryLabel()'s default.
+const CATEGORY_LABELS: Partial<Record<Category, string>> = {
   pothole: "potholes",
   garbage: "garbage",
   water_supply: "water supply",
@@ -13,6 +15,10 @@ const CATEGORY_LABELS: Record<Category, string> = {
   drainage: "drainage",
   other: "other issues",
 };
+
+function categoryLabel(category: Category): string {
+  return CATEGORY_LABELS[category] ?? String(category).replace(/_/g, " ");
+}
 
 function count(n: number, singular: string, plural: string = `${singular}s`): string {
   return `${n} ${n === 1 ? singular : plural}`;
@@ -90,7 +96,7 @@ export function buildBriefing(
     }
     const top = topCategories[0];
     if (top) {
-      summary += ` Most frequent category: ${CATEGORY_LABELS[top.category]} (${top.count}).`;
+      summary += ` Most frequent category: ${categoryLabel(top.category)} (${top.count}).`;
     }
   }
 
@@ -109,7 +115,7 @@ export function buildBriefing(
   const topCategory = topCategories[0];
   if (topCategory) {
     recommendations.push(
-      `Consider a dedicated crew for ${CATEGORY_LABELS[topCategory.category]}, the most reported open category.`,
+      `Consider a dedicated crew for ${categoryLabel(topCategory.category)}, the most reported open category.`,
     );
   }
   if (open.length === 0) {
